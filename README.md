@@ -565,7 +565,7 @@ async def on_ready():
             last_id = LAST_MESSAGE_IDS.get(channel_id)
             history_kwargs = {"after": discord.Object(id=last_id)} if last_id else {}
 
-            async for msg in channel.history(limit=200, **history_kwargs):
+            async for msg in channel.history(limit=200, oldest_first=True, **history_kwargs):
                 if msg.created_at >= cutoff_time:
                     await forward_to_zulip(msg, mapping)
 
