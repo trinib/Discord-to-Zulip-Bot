@@ -211,6 +211,7 @@ In WordPress, create a custom page template or use a simple HTML block:
 </div>
 
 <style>
+/* Layout + theme */
 #chat-app {
   display: flex;
   height: 80vh;
@@ -235,132 +236,95 @@ In WordPress, create a custom page template or use a simple HTML block:
   margin-bottom: 10px;
   color: #aaa;
   text-align: center;
-  display: flex;
-  justify-content: center;
-  align-items: center;
 }
-#channel-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
+#channel-list { list-style: none; padding: 0; margin: 0; }
 #channel-list li {
   padding: 6px 12px;
   cursor: pointer;
   border-radius: 4px;
 }
-#channel-list li:hover,
-#channel-list li.active {
+#channel-list li:hover, #channel-list li.active {
   background: #36393f;
   color: #fff;
 }
+
+/* Chat area */
 #chat-container {
   flex: 1;
   display: flex;
   flex-direction: column;
   background: #36393f;
-  overflow-y: auto;
+  overflow-y: auto;          /* <-- container we scroll */
+}
+#messages {
+  padding-bottom: 12px;
 }
 .message {
   padding: 8px 12px;
   border-bottom: 1px solid #444;
 }
-#messages {
-  padding-bottom: 12px; 
-}
 .meta {
   display: flex;
-  justify-content: space-between; /* keep author left, timestamp right */
+  justify-content: space-between;
   align-items: center;
   margin-bottom: 4px;
 }
-.author {
-  font-weight: bold;
-  color: #7289da;
-}
+.author { font-weight: bold; color: #7289da; }
 .timestamp {
   font-weight: bold;
   font-size: 14px;
   color: #B5B5B5;
-  flex: 1;
-  text-align: center; /* timestamp stays centered */
+  text-align: center;
 }
 
-/* 📱 Mobile & Tablet view */
+/* Mobile/tablet: horizontal channel list & timestamp right */
 @media (max-width: 1024px) {
-  #chat-app {
-    flex-direction: column;
-  }
-  #sidebar {
-    width: 100%;
-    padding: 5px;
-    overflow: hidden;
-  }
+  #chat-app { flex-direction: column; }
+  #sidebar { width: 100%; padding: 5px; overflow: hidden; }
   #channel-list {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    white-space: nowrap;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    cursor: grab;
+    display:flex; gap:8px; overflow-x:auto; white-space:nowrap;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none; cursor: grab;
   }
-  #channel-list:active {
-    cursor: grabbing;
-  }
-  #channel-list::-webkit-scrollbar {
-    display: none;
-  }
-  #channel-list li {
-    flex-shrink: 0;
-    background: #2b2d31;
-  }
-  
-  /* ✅ Move timestamp to the right on mobile/tablet */
-  .meta {
-    justify-content: flex-start; /* keep left alignment base */
-  }
-  .author {
-    margin-right: auto; /* push timestamp to the far right */
-  }
-  .timestamp {
-    flex: unset;
-    text-align: right;
-  }
+  #channel-list::-webkit-scrollbar{ display: none; }
+  #channel-list li { flex-shrink:0; background: #2b2d31; }
+
+  .meta { justify-content: flex-start; }
+  .author { margin-right: auto; }
+  .timestamp { flex: unset; text-align: right; }
 }
 </style>
 
 <script>
 let allMessages = [];
 let currentChannel = null;
+let shouldJumpOnRender = true;
+const MESSAGES_URL = "https://vortextreams.com/messages.json?nocache=";
 
-// Format timestamp
 function formatTimestamp(isoString) {
   const date = new Date(isoString);
   return date.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
+    year: "numeric", month: "short", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
     hour12: false
   });
 }
 
-async function loadMessages() {
+async function loadMessages(autoRefresh = false) {
   try {
-    const response = await fetch("https://YOURWEBSITE/messages.json?nocache=" + Date.now());
-    const data = await response.json();
-    allMessages = data;
+    const resp = await fetch(MESSAGES_URL + Date.now(), { cache: "no-store" });
+    if (!resp.ok) throw new Error("Fetch failed: " + resp.status);
+    const data = await resp.json();
+    allMessages = data || [];
+
+    if (!currentChannel && allMessages.length > 0) {
+      currentChannel = allMessages[0].channel;
+      shouldJumpOnRender = true;
+    }
 
     renderChannels();
-    if (!currentChannel && data.length > 0) {
-      currentChannel = data[0].channel;
-    }
-    renderMessages(currentChannel);
-  } catch (e) {
-    console.error("Error loading messages:", e);
+    renderMessages(currentChannel, autoRefresh);
+  } catch (err) {
+    console.error("Error loading messages:", err);
   }
 }
 
@@ -368,117 +332,122 @@ function renderChannels() {
   const channels = [...new Set(allMessages.map(m => m.channel))];
   const list = document.getElementById("channel-list");
   list.innerHTML = "";
-
   channels.forEach(ch => {
     const li = document.createElement("li");
     li.textContent = ch;
     if (ch === currentChannel) li.classList.add("active");
     li.onclick = () => {
+      if (ch === currentChannel) return;
       currentChannel = ch;
-      renderMessages(ch);
+      shouldJumpOnRender = true;
+      renderMessages(ch, false);
       renderChannels();
     };
     list.appendChild(li);
   });
-
-
 }
 
-function renderMessages(channel) {
+function renderMessages(channel, autoRefresh = false) {
   const messagesDiv = document.getElementById("messages");
   messagesDiv.innerHTML = "";
+  if (!channel) return;
 
-  allMessages.filter(m => m.channel === channel).forEach(msg => {
+  const filtered = allMessages.filter(m => m.channel === channel);
+  filtered.forEach(msg => {
     const div = document.createElement("div");
     div.className = "message";
     div.innerHTML = `
       <div class="meta">
-        <span class="author">${msg.author}</span>
+        <span class="author">${escapeHtml(msg.author)}</span>
         <span class="timestamp">${formatTimestamp(msg.timestamp)}</span>
       </div>
-      <div>${msg.content}</div>
+      <div class="content">${msg.content || ""}</div>
     `;
     messagesDiv.appendChild(div);
   });
+
+  if (shouldJumpOnRender && !autoRefresh) {
+    shouldJumpOnRender = false;
+    requestAnimationFrame(() => requestAnimationFrame(scrollToLatestTimestamp));
+  }
 }
 
-// Enable drag-to-swipe on channel list
+function scrollToLatestTimestamp() {
+  const container = document.getElementById("chat-container");
+  const messagesDiv = document.getElementById("messages");
+  const lastMsg = messagesDiv.lastElementChild;
+  if (!lastMsg) return;
+
+  const timestamp = lastMsg.querySelector(".timestamp");
+  if (!timestamp) {
+    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    return;
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const tsRect = timestamp.getBoundingClientRect();
+  const delta = tsRect.top - containerRect.top;
+
+  // ✅ Slightly below timestamp area to reveal more of last message
+  const extraOffset = 80; // adjust this value (in px) for how much of the message you want visible
+  const desired = container.scrollTop + delta - (container.clientHeight - tsRect.height - extraOffset);
+
+  const maxScroll = messagesDiv.scrollHeight - container.clientHeight;
+  const final = Math.max(0, Math.min(desired, maxScroll));
+
+  container.scrollTo({ top: final, behavior: "smooth" });
+}
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return str.replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+}
+
 function enableSwipeScroll() {
   const list = document.getElementById("channel-list");
-  let isDragging = false;
-  let startX, scrollLeft, lastX, velocity = 0;
-  let momentumID;
+  let isDown = false, startX = 0, scrollLeft = 0, last = 0, vel = 0, rafId = null;
 
-  function momentumScroll() {
-    if (Math.abs(velocity) > 0.1) { // small cutoff to stop
-      list.scrollLeft -= velocity;
-      velocity *= 0.98; // friction (tweak 0.90–0.98 for feel)
-      momentumID = requestAnimationFrame(momentumScroll);
+  function momentum() {
+    if (Math.abs(vel) > 0.5) {
+      list.scrollLeft -= vel;
+      vel *= 0.95;
+      rafId = requestAnimationFrame(momentum);
     } else {
-      cancelAnimationFrame(momentumID);
+      cancelAnimationFrame(rafId);
+      rafId = null;
     }
   }
 
-  // Mouse events
   list.addEventListener("mousedown", e => {
-    isDragging = true;
-    startX = e.pageX;
-    scrollLeft = list.scrollLeft;
-    lastX = startX;
-    cancelAnimationFrame(momentumID);
+    isDown = true; startX = e.pageX; scrollLeft = list.scrollLeft; last = startX; vel = 0;
+    cancelAnimationFrame(rafId);
   });
-
+  list.addEventListener("mouseleave", () => { if (isDown) { isDown = false; rafId = requestAnimationFrame(momentum); }});
+  list.addEventListener("mouseup", () => { if (isDown) { isDown = false; rafId = requestAnimationFrame(momentum); }});
   list.addEventListener("mousemove", e => {
-    if (!isDragging) return;
+    if (!isDown) return;
     e.preventDefault();
     const x = e.pageX;
-    const walk = x - startX;
-    list.scrollLeft = scrollLeft - walk;
-
-    velocity = x - lastX; // difference since last frame
-    lastX = x;
+    list.scrollLeft = scrollLeft - (x - startX);
+    vel = x - last; last = x;
   });
 
-  list.addEventListener("mouseup", () => {
-    isDragging = false;
-    momentumScroll();
-  });
-
-  list.addEventListener("mouseleave", () => {
-    if (isDragging) {
-      isDragging = false;
-      momentumScroll();
-    }
-  });
-
-  // Touch events
   list.addEventListener("touchstart", e => {
-    isDragging = true;
-    startX = e.touches[0].pageX;
-    scrollLeft = list.scrollLeft;
-    lastX = startX;
-    cancelAnimationFrame(momentumID);
+    isDown = true; startX = e.touches[0].pageX; scrollLeft = list.scrollLeft; last = startX; vel = 0;
+    cancelAnimationFrame(rafId);
   });
-
   list.addEventListener("touchmove", e => {
-    if (!isDragging) return;
+    if (!isDown) return;
     const x = e.touches[0].pageX;
-    const walk = x - startX;
-    list.scrollLeft = scrollLeft - walk;
-
-    velocity = x - lastX;
-    lastX = x;
+    list.scrollLeft = scrollLeft - (x - startX);
+    vel = x - last; last = x;
   });
-
-  list.addEventListener("touchend", () => {
-    isDragging = false;
-    momentumScroll();
-  });
+  list.addEventListener("touchend", () => { isDown = false; rafId = requestAnimationFrame(momentum); });
 }
 
-setInterval(loadMessages, 10000);
-loadMessages();
+loadMessages(false);
 enableSwipeScroll();
+setInterval(() => loadMessages(true), 10000);
 </script>
 ```
 
